@@ -20,11 +20,11 @@
 | `aibp-ops-preamble.md` | Draft | Platform overview, operational principles, team ownership, compliance alignment, reading guide |
 | `aibp-ops-step1.md` | Draft | Step 1 — Ingestion & Triage Operations (SWEE layer) |
 | `aibp-ops-step2.md` | Draft | Step 2 — Agentic Orchestration Operations (AO layer) |
-| `aibp-ops-step3.md` | Not started | Step 3 — Governance & Control Operations (AIGP layer) |
-| `aibp-ops-step4.md` | Not started | Step 4 — Platform Reliability Operations |
-| `aibp-ops-step5.md` | Not started | Step 5 — FinOps: Token & Cost Management |
-| `aibp-ops-step6.md` | Not started | Step 6 — Operational Feedback & Automated Self-Reflection |
-| `aibp-ops-step7.md` | Not started | Step 7 — People, Process & Governance Operations |
+| `aibp-ops-step3.md` | Draft | Step 3 — Governance & Control Operations (AIGP layer) |
+| `aibp-ops-step4.md` | Draft | Step 4 — Platform Reliability Operations |
+| `aibp-ops-step5.md` | Draft | Step 5 — FinOps: Token & Cost Management |
+| `aibp-ops-step6.md` | Draft | Step 6 — Operational Feedback & Automated Self-Reflection |
+| `aibp-ops-step7.md` | Draft | Step 7 — People, Process & Governance Operations |
 
 ---
 
