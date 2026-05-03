@@ -1,5 +1,5 @@
 # AI-Based Processing Platform (AIBP)
-## Operations Blueprint
+## Operations Blueprint — Master Index
 
 | Field | Value |
 |---|---|
@@ -9,9 +9,78 @@
 | **Date** | 3 May 2026 |
 | **Classification** | Internal — Restricted |
 
+> This file is the master index. Each section of the blueprint lives in its own document listed below. Refer to `aibp-ops-preamble.md` for platform architecture, operational principles, team ownership, and compliance framework alignment.
+
 ---
 
-## Preamble
+## Document Map
+
+| Document | Status | Coverage |
+|---|---|---|
+| `aibp-ops-preamble.md` | Draft | Platform overview, operational principles, team ownership, compliance alignment, reading guide |
+| `aibp-ops-step1.md` | Draft | Step 1 — Ingestion & Triage Operations (SWEE layer) |
+| `aibp-ops-step2.md` | Draft | Step 2 — Agentic Orchestration Operations (AO layer) |
+| `aibp-ops-step3.md` | Not started | Step 3 — Governance & Control Operations (AIGP layer) |
+| `aibp-ops-step4.md` | Not started | Step 4 — Platform Reliability Operations |
+| `aibp-ops-step5.md` | Not started | Step 5 — FinOps: Token & Cost Management |
+| `aibp-ops-step6.md` | Not started | Step 6 — Operational Feedback & Automated Self-Reflection |
+| `aibp-ops-step7.md` | Not started | Step 7 — People, Process & Governance Operations |
+
+---
+
+## High-Level Blueprint Summary
+
+The AIBP Operations Blueprint follows the email journey through the platform, applying operational design at each layer:
+
+```
+Email → SWEE → AO → AIGP → Internal DB/Microservices
+         │       │     │
+      Step 1  Step 2  Step 3
+                │
+          Steps 4–7 (cross-cutting operational concerns)
+```
+
+### Step 1 — Ingestion & Triage Operations (SWEE)
+- **1.1** Email queue management: Azure Service Bus Premium with session ordering, DLQ automation
+- **1.2** EvalOps Tier 0: Real-time triage confidence monitoring + embedding drift detection + weekly stratified officer audit
+
+### Step 2 — Agentic Orchestration Operations (AO)
+- **2.1** Agent Fleet & Version Registry: SemVer, signed container images, PostgreSQL registry DB
+- **2.2** Deployment Lifecycle: Dev → Test → Pre-Prod → Prod via Azure DevOps multi-stage pipelines
+- **2.3** Testing Strategy: Blue-Green + Canary via ACA traffic weight splitting
+- **2.4** EvalOps: Azure AI Evaluation SDK + Langfuse (self-hosted) + LLM-as-a-Judge
+- **2.5** Observability & Distributed Tracing: OpenTelemetry + OpenInference → Azure Monitor + Langfuse
+- **2.6** Behavioral Auditing & Traceability: Append-only CosmosDB audit ledger + Event Hubs for SOC
+- **2.7** Behavioral Anomaly Detection: Embedding-based behavioral baseline comparison
+
+### Step 3 — Governance & Control Operations (AIGP)
+- **3.1** HITL Management: Risk-based triggers, HITL queue, officer review workflow
+- **3.2** Incident Response & Emergency Stop: Kill switch hierarchy, automated runbook
+- **3.3** RiskOps: Policy-as-code (OPA), Azure Defender, PDPA/IM8/ISO 27001 posture
+
+### Step 4 — Platform Reliability Operations
+- **4.1** ResiliencyOps: Circuit breakers, DLQ fallback, Azure OpenAI PTU sizing
+- **4.2** SLA Management: KPI definitions, measurement framework, Azure Monitor Workbooks
+
+### Step 5 — FinOps
+- **5.1** Token & cost monitoring per agent and per email
+- **5.2** Cost comparison model: agent-resolved vs. human-officer-resolved
+
+### Step 6 — Operational Feedback & Self-Reflection
+- **6.1** Structured feedback loop: HITL officer corrections → Langfuse evaluation dataset
+- **6.2** Automated post-mortem pipeline: event-driven trace analysis after HITL interventions
+
+### Step 7 — People, Process & Governance Operations
+- **7.1** Roles & responsibilities across teams
+- **7.2** Runbooks & escalation playbooks
+
+---
+
+*The content below this line is the original draft from Google AI and is superseded by the individual step documents above. It is retained here for reference during the drafting phase and will be removed in a later version.*
+
+---
+
+## Original Draft (Reference Only)
 
 ### Purpose & Scope
 
