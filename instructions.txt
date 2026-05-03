@@ -1,0 +1,44 @@
+My company is planning to build agentic platform. Taxpayer's email will go to SWEE which is an app and will be processed, triaged to the according SOP, Agent orchestration layer will host the common agentic tools and runtime services and stuff. There is also AI Governance Platform which is a governance and mcp layer before the agent can make actions to internal database. We are using Azure, though the tech stack may not be, e.g., internal database is protected by ForgeRock.
+
+So it is Email -> swee -> AO -> AIGP -> internal DB/microservices.
+
+I need help to think of a comprehensive view/blueprint for Operations.
+There are also other sections like app & data, platform & infra, security & identity, governance & risk, people & process, but I am responsible for Operations.
+
+Tentatively I have drafted the following sections/scopes that should be under Operations:
+
+EvalOps
+
+HITL Management (not very sure if this should be here)
+- Incident Response & Emergency Stop: Mechanism to instantly halt specific agents or all agent traffic to the AIGP layer if anomalies are detected.
+
+Agent Fleet and Version Matrix
+
+Deployment Lifecycle (Dev -> Pre-Prod -> Prod)
+- How to start from development of agent, to Pre-Prod and eventually to Prod.
+
+Testing Strategy (Blue green? Canary?)
+
+Observability
+
+Behavioral Auditing & Traceability (could be under Observability too)
+- Tool Usage & Latency Analysis
+- Explainability Logs (Audit Trail): Why an agent did something
+- Behavioral Anomaly Detection
+
+Budgetary Guardrails (FinOps)
+- Token usage per agent and per email
+- How much it costs to hire an officer per email vs agent, cost savings
+
+Operational Feedback and Automated Self-Reflection
+
+SLA
+- "Time to Resolution" vs "Accuracy Rate"
+
+RiskOps?
+
+But you may suggest otherwise or additional sections.
+
+I need you to structure it as Step 1, 1.1, 1.2 ..., Step 2, Step ...
+Following the flow from taxpayer email go to SWEE and onwards.
+For each step/sub-step, I need you to describe on the implementation, alternative to the implementations e.g., Option 1 (Recommended), Option 2, Option 3, pros and cons of each option and why we are recommending the recommended option. For each, go into very deep detail on how we intend to implement it, including the technology or standard to use.
