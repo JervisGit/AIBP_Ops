@@ -1,0 +1,47 @@
+DevOps 
+•	What sort of dev / test / prod environments are required for agent design?
+o	Might need to access LLM service and cloud services, e.g. for toxicity tests, hallucination tests. Also may required by test tool for red teaming test  e.g.   promptfoo
+•	How do we test agent changes in production? 
+o	Given that system prompts may change, models may be upgraded, tooling / APIs may also change
+•	How do we rollback agents / models?
+o	Blue-Green Deployment?
+•	What tools / programs should we use to develop agents and maintain an agent registry? 
+•	What checks / processes need to be in place before deployment?
+•	Docker and image scanning
+•	Best practices to deploy multiple agents to multiple service e.g. pod/container apps
+Reliability
+•	How do we manage for and account for peak periods?
+•	How do we manage workloads across various processes or agents?
+•	What is the reliability baseline? E.g. availability, error tolerance
+•	How do we ensure consistency in agent operations?
+Performance
+•	What is our model selection strategy? How do we manage model upgrades and quality testing?
+•	Do we need to host a model – for select use-cases of greater sensitivity / security risk?
+•	When deploying agentic workflows that require frequent, iterative LLM calls (which consume more tokens and compute than standard RAG), how have you managed rate limits and token quotas in enterprise cloud environments like Azure? Did you implement semantic caching or request queuing at the infrastructure layer?
+Observability / Logs
+•	What logs or audit trails must we maintain to comply to IM8 / WOG circulars?
+•	How do we reconstruct “who/what decided what” across humans and agents?
+•	How do we log and track agent outputs and actions, along with input prompts and relevant outputs?
+•	What is the minimum observability bar for any agentic workflow (logs, traces, decision snapshots)? Who should be able to access these for optimisation?
+•	How is sensitive data (PII) handled in traces and logs? If we redact all PII, we may be sacrificing on deep visibility needed for effective debugging, so how do we strike a balance?
+•	In what ways do you surface information about the AI’s reasoning? Can the system generate an audit trail that explains why it chose a specific tool or data source? Especially for OpenAI models as they do not provide the internal reasoning (CoT) tokens in their API response, so there’s a lack of visibility on why the model reach a certain “conclusion”
+•	How do you detect "behavioral drift" over time?  
+•	How do you handle non-deterministic failures? If say the supervisor agent just decides to silently stop the workflow without giving any reasoning or when an agent is "looping" or stuck in a reasoning trap, how do you identify it?
+•	How do we identify if a conclusion an agent make is grounded in context or hallucinated? How to detect in real-time production?
+•	In a hypothetical scenario where we go with microservices, and distributed tracing is needed, how do we do aggregated logging? Log to where?
+•	Any thoughts on frameworks/providers? Langfuse, LangSmith, Arize, Pydantic Logfire, so many options...
+•	When an agent performs a complex multi-step reasoning process, how do you expose that 'chain of thought' to the human reviewer in the UI without overwhelming them? What UX patterns have you seen that build trust in the agent's output?
+•	Evaluating deterministic code is easy; evaluating non-deterministic agents is hard. In your experience, what automated evaluation frameworks (e.g., LLM-as-a-judge, RAGAS) actually work in production to detect regressions when we update an agent's system prompt or underlying model?
+Operations / BAU
+•	How to monitor agent operations in real time? Do we have people on-call?
+•	What is the procedure when an agent malfunctions, and how do we limit the impact of such incidents?
+•	How do we monitor agent and application accuracy?
+•	What are the run‑time kill switches and degradation paths?
+•	What is your recommended strategy for transitioning a production system from a single-prompt RAG application to a multi-agent system? Do you run them in shadow mode concurrently, or migrate specific use cases (e.g., simple queries vs. complex multi-SOP queries) one by one?
+
+Finance
+•	How do we track AI spend, what is deemed a ‘reasonable’ amount?
+•	How do we charge out development / usage costs to divisions?
+•	[Do we foresee alternate procurement / finance processes required with agents / GenAI? e.g. handling AI expenditure?] 
+•	How to manage the costs from generating and storing all the logs and reports? E.g. automated emails from SWEE detailing each step of the process 
+
