@@ -7,6 +7,8 @@ then populates it with Operations content.
 import copy
 import shutil
 import os
+import io
+import zipfile
 from lxml import etree
 
 from pptx import Presentation
@@ -38,6 +40,26 @@ TAG_COLOURS = {
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _repack_zip(path):
+    """
+    Rewrite the PPTX zip keeping only the LAST occurrence of each filename.
+    This removes stale slide entries left over from the source template,
+    preventing PowerPoint from finding the old Security deck slides on repair.
+    """
+    entries = {}
+    with zipfile.ZipFile(path, 'r') as zin:
+        for name in zin.namelist():
+            entries[name] = zin.read(name)   # last entry wins for duplicates
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zout:
+        for name, data in entries.items():
+            zout.writestr(name, data)
+
+    with open(path, 'wb') as f:
+        f.write(buf.getvalue())
+
 
 def _remove_all_slides(prs):
     """Remove all slide references from the presentation XML (OPC parts remain but are overwritten)."""
@@ -1083,6 +1105,8 @@ def main():
 
     print("Saving to: %s" % DST)
     prs.save(DST)
+    print("Repacking zip to remove stale template slides...")
+    _repack_zip(DST)
     print("Done. Total slides: %d" % len(prs.slides))
 
 
