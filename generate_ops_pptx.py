@@ -637,42 +637,357 @@ def slide_hitl(prs):
     _body(sl, body2, Inches(3.2), height=Inches(3.3), font_pt=10)
 
 
-def slide_emergency_stop(prs):
+def slide_emergency_stop_requirements(prs):
     sl = _add_slide(prs)
-    _title(sl, "Incident Response & Emergency Stop (Kill Switch Hierarchy)")
+    _title(sl, "Incident Response & Emergency Stop — Requirements")
+    _tag(sl, "For Confirmation")
+    _section_label(sl, "Incident Management", Inches(0.6))
+
+    _txbox(sl,
+           "Despite all preventive controls — evaluation gates, canary deployments, HITL, "
+           "behavioural anomaly detection — production incidents will occur. The Emergency Stop system "
+           "is the last line of defence: the ability to halt agent activity instantly, at any granularity, "
+           "without requiring a code deployment or manual infrastructure intervention.",
+           Inches(0.91), Inches(0.75), Inches(11.5), Inches(0.65),
+           font_pt=12, color=BLACK)
+
+    _txbox(sl, "Emergency Stop must satisfy all six of the following requirements:",
+           Inches(0.91), Inches(1.45), Inches(11.5), Inches(0.3),
+           font_pt=12, bold=True, color=BLUE)
+
+    requirements = (
+        "1.  Instant effect — Traffic to a specific agent (or all agents) must stop within ≤ 30 seconds "
+        "of the stop command being issued. This is a hard operational requirement.\n"
+        "\n"
+        "2.  Granular control — Stops must be applicable at three levels: "
+        "(a) a specific agent version, (b) a specific agent (all versions), (c) all agents platform-wide.\n"
+        "\n"
+        "3.  No deployment required — The stop mechanism must be activatable by an authorised Ops or "
+        "AIGP team member without triggering a CI/CD pipeline run or requiring code changes.\n"
+        "\n"
+        "4.  Automatically triggered — The stop mechanism must also be triggerable automatically by the "
+        "behavioural anomaly detector (Step 2.7) and the AIGP policy engine — human availability "
+        "cannot be assumed at the moment of a critical incident.\n"
+        "\n"
+        "5.  Auditable — Every stop event (who triggered it, when, at what scope, and why) must be recorded.\n"
+        "\n"
+        "6.  Safe resume — After an emergency stop, resuming agent traffic must require an explicit "
+        "positive action and must not occur automatically."
+    )
+    _body(sl, requirements, Inches(1.8), height=Inches(4.55), font_pt=12)
+
+
+def slide_kill_switch_hierarchy(prs):
+    sl = _add_slide(prs)
+    _title(sl, "Kill Switch Hierarchy — Three-Level Architecture (Option 1)")
+    _tag(sl, "For Confirmation")
+    _section_label(sl, "Incident Management", Inches(0.6))
+
+    _txbox(sl, "Azure App Configuration is selected for kill switches because:",
+           Inches(0.91), Inches(0.75), Inches(11.5), Inches(0.3),
+           font_pt=12, bold=True, color=BLUE)
+
+    rationale = (
+        "• Flag change propagation in < 5 seconds to all connected clients (event-driven push via Azure "
+        "Event Grid) — meets the ≤ 30-second kill latency requirement with significant margin\n"
+        "• Fully within the GCC 2.0 boundary and accessible over private endpoints\n"
+        "• Independent of the ACA deployment pipeline — no deployment required to change a flag value\n"
+        "• Access controlled by Azure RBAC (Ops and AIGP team leads only, via Entra ID-authenticated "
+        "Azure App Configuration data owner role)"
+    )
+    _body(sl, rationale, Inches(1.1), height=Inches(1.3), font_pt=12)
+
+    _txbox(sl, "Kill switch hierarchy — three levels, independently controllable:",
+           Inches(0.91), Inches(2.45), Inches(11.5), Inches(0.3),
+           font_pt=12, bold=True, color=BLUE)
+
+    headers = ["Level", "Flag Key (Azure App Configuration)", "Scope", "Example Use"]
+    col_widths = [Inches(1.5), Inches(3.2), Inches(2.5), Inches(4.3)]
+    rows = [
+        ["Agent-version kill",
+         "agents:{agentName}:{semver}:enabled",
+         "Single agent version",
+         "Roll back a specific canary revision that is producing anomalies"],
+        ["Agent kill",
+         "agents:{agentName}:enabled",
+         "All versions of a specific agent",
+         "Stop all processing for a specific SOP category (e.g., refund agent has a critical fault)"],
+        ["Platform kill",
+         "agents:platform:enabled",
+         "All agents, all SOP categories",
+         "Catastrophic failure across the platform; full halt"],
+    ]
+    _options_table(sl, rows, headers, top=Inches(2.78), col_widths=col_widths)
+
+    _txbox(sl,
+           "Technology stack: Azure App Configuration (feature flags)  ·  Azure Automation (runbook)  ·  "
+           "Azure Service Bus (topic subscription management)  ·  Azure Monitor (alert-to-runbook trigger)  ·  "
+           "Azure Key Vault (runbook credential management)",
+           Inches(0.91), Inches(5.9), Inches(11.5), Inches(0.5),
+           font_pt=10, italic=True, color=GREY)
+
+
+def slide_kill_switch_enforcement(prs):
+    sl = _add_slide(prs)
+    _title(sl, "Kill Switch Enforcement in AO Agents")
+    _tag(sl, "For Confirmation")
+    _section_label(sl, "Incident Management", Inches(0.6))
+
+    _txbox(sl, "Each LangGraph agent checks the relevant kill switch flags at two mandatory points:",
+           Inches(0.91), Inches(0.75), Inches(11.5), Inches(0.3),
+           font_pt=12, bold=True, color=BLUE)
+
+    checks = (
+        "Check Point 1 — On message dequeue (before beginning email processing)\n"
+        "  The agent checks agents:platform:enabled and agents:{agentName}:enabled.\n"
+        "  If either is false: the message is immediately released back to the Service Bus queue "
+        "(delivery count incremented) and the container app scales to zero replicas "
+        "(via ACA scale rule triggered by the App Configuration flag event).\n"
+        "\n"
+        "Check Point 2 — Before each AIGP tool call\n"
+        "  The agent checks agents:{agentName}:{semver}:enabled.\n"
+        "  If false: the in-progress workflow is halted, the tool call is not made, and the email is "
+        "re-queued for processing by a different version (if available) or routed to the Human Officer Queue."
+    )
+    _body(sl, checks, Inches(1.1), height=Inches(2.6), font_pt=12)
+
+    _txbox(sl, "App Configuration SDK — Polling vs. Event-Driven Refresh (Critical Requirement):",
+           Inches(0.91), Inches(3.75), Inches(11.5), Inches(0.3),
+           font_pt=12, bold=True, color=BLUE)
+
+    sdk_note = (
+        "The Azure App Configuration SDK supports both polling (checking flags on a schedule) and "
+        "event-driven refresh. For the kill switch ≤ 30-second latency requirement, the AO agent "
+        "must use event-driven refresh mode, where the SDK subscribes to App Configuration change "
+        "events via Azure Event Grid and updates the in-process flag value without waiting for a poll cycle.\n"
+        "\n"
+        "CI validation requirement: A mandatory test case must verify that the agent responds to a flag "
+        "change within 30 seconds in the test environment. If this test fails, the pull request is blocked."
+    )
+    _body(sl, sdk_note, Inches(4.1), height=Inches(2.1), font_pt=12)
+
+
+def slide_emergency_stop_triggers(prs):
+    sl = _add_slide(prs)
+    _title(sl, "Emergency Stop: Three Trigger Paths")
+    _tag(sl, "For Confirmation")
+    _section_label(sl, "Incident Management", Inches(0.6))
+
+    _txbox(sl, "Trigger 1 — Manual (Ops / AIGP team operator)",
+           Inches(0.91), Inches(0.75), Inches(11.5), Inches(0.3),
+           font_pt=12, bold=True, color=BLUE)
+    _body(sl,
+          "• Operator authenticates to the Azure portal or uses the Azure CLI with their Entra ID credentials\n"
+          "• Operator sets the relevant flag to false in Azure App Configuration\n"
+          "• Effect propagates to all running agent clients within ≤ 30 seconds via Event Grid push",
+          Inches(1.1), height=Inches(0.75), font_pt=12)
+
+    _txbox(sl, "Trigger 2 — Automated (from behavioural anomaly detector — Step 2.7)",
+           Inches(0.91), Inches(1.9), Inches(11.5), Inches(0.3),
+           font_pt=12, bold=True, color=BLUE)
+    _body(sl,
+          "• The ops-anomaly-events Service Bus topic is monitored by an Azure Monitor alert rule on "
+          "the custom metric ao.anomaly.rate\n"
+          "• When the anomaly rate for a specific agent exceeds 50% over any 30-minute window, the alert "
+          "fires an Azure Automation Runbook (ops-emergency-stop.ps1)\n"
+          "• The runbook sets the kill switch flag, writes the stop event to Cosmos DB, and notifies "
+          "the Ops team via Azure Monitor Action Group (Teams + email)",
+          Inches(2.25), height=Inches(0.95), font_pt=12)
+
+    _txbox(sl, "Trigger 3 — Automated (from AIGP policy engine)",
+           Inches(0.91), Inches(3.25), Inches(11.5), Inches(0.3),
+           font_pt=12, bold=True, color=BLUE)
+    _body(sl,
+          "• The AIGP layer detects a policy-violating pattern (e.g., an agent attempting to call a tool "
+          "outside its declared capability manifest, or a jailbreak attempt in tool call parameters)\n"
+          "• AIGP calls the AIGP-to-Ops integration endpoint (POST /ops/emergency-stop) authenticated "
+          "with its Managed Identity\n"
+          "• This endpoint (an Azure Function) triggers the same Automation Runbook as Trigger 2, "
+          "with TriggerSource = 'aigp_policy'",
+          Inches(3.6), height=Inches(0.95), font_pt=12)
+
+    _txbox(sl,
+           "All three triggers converge on the same Automation Runbook — ensuring a single, consistent "
+           "stop execution path and a unified audit trail regardless of how the stop was initiated.",
+           Inches(0.91), Inches(5.85), Inches(11.5), Inches(0.45),
+           font_pt=11, bold=True, color=BLUE)
+
+
+def slide_emergency_stop_runbook(prs):
+    sl = _add_slide(prs)
+    _title(sl, "Automated Emergency Stop — Runbook (ops-emergency-stop.ps1)")
+    _tag(sl, "For Information")
+    _section_label(sl, "Incident Management", Inches(0.6))
+
+    _txbox(sl, "The Azure Automation Runbook performs four actions on every invocation:",
+           Inches(0.91), Inches(0.75), Inches(11.5), Inches(0.3),
+           font_pt=12, bold=True, color=BLUE)
+
+    steps = (
+        "1.  Authenticate — Connect using the Automation Account's Managed Identity "
+        "(no stored credentials; Azure Key Vault is not needed for the runbook's own auth).\n"
+        "\n"
+        "2.  Set the kill switch flag — Set-AzAppConfigurationKeyValue sets "
+        "agents:{AgentName}:{Semver}:enabled to false with Label = prod. "
+        "Flag change propagates to all connected ACA containers within < 5 seconds via Event Grid.\n"
+        "\n"
+        "3.  Write stop event to Cosmos DB audit ledger (ops-emergency-events container) — "
+        "Records: id (UUID), eventType = 'emergency_stop', agentName, semver, scope, "
+        "triggeredBy, triggeredByIdentity, reason, stoppedAt, messagesInFlightAtStop.\n"
+        "\n"
+        "4.  Notify Ops team — Send-AzMonitorActionGroupNotification to the ops-critical-alerts "
+        "Action Group (Teams channel + email), including agent name, version, trigger reason, "
+        "and trigger source."
+    )
+    _body(sl, steps, Inches(1.1), height=Inches(3.2), font_pt=12)
+
+    _txbox(sl,
+           "Runbook parameters:  AgentName  ·  Semver  ·  TriggerReason  ·  "
+           "TriggerSource  ('anomaly_detector' | 'aigp_policy' | 'manual')",
+           Inches(0.91), Inches(4.35), Inches(11.5), Inches(0.32),
+           font_pt=11, color=DARK_GREY)
+
+    _txbox(sl,
+           "Platform kill (Level 3) — The runbook additionally calls the Azure Service Bus Management API "
+           "to set the topic to Disabled mode, stopping new messages from being enqueued by SWEE and "
+           "stopping AO consumers from dequeuing new messages.",
+           Inches(0.91), Inches(4.75), Inches(11.5), Inches(0.45),
+           font_pt=12, color=BLACK)
+
+    _txbox(sl,
+           "Operational requirement: The runbook must be tested at minimum quarterly in the test "
+           "environment to confirm the end-to-end kill switch path is functional "
+           "(flag change → agent stops → Cosmos DB record created → Teams notification received).",
+           Inches(0.91), Inches(5.85), Inches(11.5), Inches(0.45),
+           font_pt=11, bold=True, color=BLUE)
+
+
+def slide_service_bus_drain(prs):
+    sl = _add_slide(prs)
+    _title(sl, "Service Bus Drain & Safe Resume Procedure")
+    _tag(sl, "For Confirmation")
+    _section_label(sl, "Incident Management", Inches(0.6))
+
+    _txbox(sl, "Service Bus Drain (activated as part of a Platform Kill — Level 3)",
+           Inches(0.91), Inches(0.75), Inches(11.5), Inches(0.3),
+           font_pt=12, bold=True, color=BLUE)
+
+    drain = (
+        "Activating a kill switch stops new email processing but does not immediately affect "
+        "~20 emails already in-flight (agent containers currently processing a message and holding a lock).\n"
+        "\n"
+        "1.  Runbook sets Service Bus topic to Disabled mode — stops new messages from SWEE being "
+        "enqueued; stops AO consumers from dequeuing new messages.\n"
+        "2.  In-flight messages with active locks will either: (a) complete processing normally "
+        "within ≤ 5 minutes, or (b) be abandoned by the agent on its next App Configuration flag "
+        "check, returning them to the queue.\n"
+        "3.  After all in-flight locks expire (within 5 minutes), the queue is effectively drained — "
+        "no new processing occurs."
+    )
+    _body(sl, drain, Inches(1.1), height=Inches(1.9), font_pt=12)
+
+    _txbox(sl, "Safe Resume Procedure — explicit positive action required (6-step checklist)",
+           Inches(0.91), Inches(3.05), Inches(11.5), Inches(0.3),
+           font_pt=12, bold=True, color=BLUE)
+
+    resume = (
+        "1.  Ops team documents the incident root cause in the incident management system.\n"
+        "2.  AO team or AIGP team (depending on root cause) confirms the issue is resolved.\n"
+        "3.  Ops team lead and AIGP team lead both approve the resume in Azure DevOps "
+        "(parallel approval task — double approval required; neither can approve alone).\n"
+        "4.  Ops operator re-enables the kill switch flag in Azure App Configuration.\n"
+        "5.  Service Bus topic is re-enabled.\n"
+        "6.  Ops team monitors the AO Operations Dashboard for 30 minutes post-resume.\n"
+        "\n"
+        "The resume is logged in the Cosmos DB emergency stop record: "
+        "status updated to 'resumed', resumedAt and resumedBy fields populated."
+    )
+    _body(sl, resume, Inches(3.4), height=Inches(2.6), font_pt=12)
+
+    _txbox(sl,
+           "Note (SWEE integration dependency): Service Bus Disabled mode during a platform kill may "
+           "affect SWEE's ability to queue emails. SWEE must handle Service Bus publish failures "
+           "gracefully (dead-letter SWEE-side, or brief in-memory queue). This must be specified to the SWEE team.",
+           Inches(0.91), Inches(6.1), Inches(11.5), Inches(0.38),
+           font_pt=10, italic=True, color=GREY)
+
+
+def slide_emergency_stop_audit(prs):
+    sl = _add_slide(prs)
+    _title(sl, "Emergency Stop Event Audit Record (Cosmos DB — ops-emergency-events)")
+    _tag(sl, "For Information")
+    _section_label(sl, "Incident Management", Inches(0.6))
+
+    _txbox(sl,
+           "Every stop and resume event is written as an immutable record to the Cosmos DB "
+           "ops-emergency-events container. Fields:",
+           Inches(0.91), Inches(0.75), Inches(11.5), Inches(0.32),
+           font_pt=12, color=BLACK)
+
+    headers = ["Field", "Description"]
+    col_widths = [Inches(2.8), Inches(8.7)]
+    rows = [
+        ["id",                    "UUID — unique identifier for the event record"],
+        ["eventType",             "'emergency_stop' or 'emergency_resume'"],
+        ["agentName",             "Agent name, or 'PLATFORM' for a platform-level kill"],
+        ["semver",                "Agent version, or 'ALL' for agent-level or platform kill"],
+        ["scope",                 "'agent_version'  /  'agent'  /  'platform'"],
+        ["triggeredBy",           "'anomaly_detector'  /  'aigp_policy'  /  'manual'"],
+        ["triggeredByIdentity",   "Entra ID UPN (manual) or service principal name (automated)"],
+        ["reason",                "Free-text or structured reason code describing the trigger"],
+        ["stoppedAt",             "ISO 8601 timestamp of the stop event"],
+        ["resumedAt",             "ISO 8601 timestamp (populated on resume; null while stop is active)"],
+        ["resumedBy",             "Entra ID UPN of the approving Ops team lead"],
+        ["messagesInFlightAtStop","Count of messages held by active Service Bus locks at stop time"],
+        ["affectedEmailCount",    "Count of emails re-queued or routed to Human Officer Queue"],
+    ]
+    _options_table(sl, rows, headers, top=Inches(1.12), col_widths=col_widths)
+
+    _txbox(sl,
+           "This record, combined with the Azure DevOps double-approval resume trail, constitutes the "
+           "ISO 27001 A.16 (Information Security Incident Management) record for Emergency Stop events. "
+           "Retained for 7 years (IM8 / WOG record retention requirement).",
+           Inches(0.91), Inches(6.08), Inches(11.5), Inches(0.42),
+           font_pt=10, bold=True, color=BLUE)
+
+
+def slide_emergency_stop_options(prs):
+    sl = _add_slide(prs)
+    _title(sl, "Emergency Stop — Options Comparison & Recommendation")
     _tag(sl, "For Confirmation")
     _section_label(sl, "Incident Management", Inches(0.6))
 
     body = (
-        "Kill Switch Hierarchy (3 levels, all via Azure App Configuration feature flags)\n"
+        "✔ Option 1 (Recommended) — Azure App Configuration Feature Flag Kill Switch "
+        "+ Azure Automation Runbook + Service Bus Drain\n"
+        "  • 3-level hierarchy (agent-version / agent / platform) — independently controllable\n"
+        "  • Flag propagation < 5 s via Azure Event Grid push; meets ≤ 30 s requirement with margin\n"
+        "  • ACA scale-to-zero invoked as a secondary action 5 minutes after the flag stop\n"
+        "  Pros: Automated runbook triggers even without an Ops engineer online; full Cosmos DB audit "
+        "record satisfies ISO 27001 A.16; explicit double-approval resume prevents premature restart\n"
+        "  Cons: Event-driven SDK refresh requires specific config in agent code (must be CI-validated); "
+        "Service Bus Disabled mode creates a SWEE dependency that must be managed\n"
         "\n"
-        "  Level 1 — Agent-Version Stop: agents:{agentName}:{semver}:enabled = false\n"
-        "            Scope: one specific version; other versions continue running\n"
+        "Option 2 — Azure API Management Policy Kill Switch\n"
+        "  Update APIM inbound policies to return HTTP 503 for all agent requests\n"
+        "  Pros: Centralised at APIM layer; no agent-side SDK changes required\n"
+        "  Cons: APIM policy propagation 30–60 s — may not meet ≤ 30 s requirement; stops agents "
+        "at the AIGP API call layer only (agents already in reasoning steps continue running); "
+        "does not address SWEE-to-Service Bus ingestion (new emails keep being enqueued)\n"
         "\n"
-        "  Level 2 — Agent-All-Versions Stop: agents:{agentName}:enabled = false\n"
-        "            Scope: all versions of one agent; other agents unaffected\n"
+        "Option 3 — ACA Scale-to-Zero Force\n"
+        "  Force all Container Apps to scale to zero replicas via the Azure ARM API\n"
+        "  Pros: Definitive — agents cannot run if containers are stopped\n"
+        "  Cons: Not instant (1–3 min for containers to drain); does not stop in-flight transactions "
+        "already in progress; container restart takes 30–60 s/container on resume; "
+        "Service Bus message locks remain held until expiry (≤ 5 min uncertainty window)\n"
         "\n"
-        "  Level 3 — Platform Stop: agents:platform:enabled = false\n"
-        "            Scope: all agents; Service Bus topic disabled to halt new enqueueing\n"
-        "\n"
-        "Trigger paths:\n"
-        "  • Automated: Behavioural anomaly >50% deviation rate triggers Level 1/2 automatically\n"
-        "  • Manual: Ops Lead (Level 1/2) or Ops Lead + AIGP Team Lead (Level 3)\n"
-        "  • Response time: Flag propagation to all ACA containers within 90 seconds\n"
-        "  • In-flight messages: Lock expiry returns messages to queue for retry/DLQ\n"
-        "\n"
-        "Platform Resume (after Emergency Stop)\n"
-        "  Requires double approval: Ops Lead + AO Team Lead sign-off in Azure DevOps\n"
-        "  AO team must confirm root cause and fix deployed before resume is approved\n"
-        "  All stop/resume events written to append-only Emergency Stop Cosmos DB container\n"
-        "\n"
-        "Fallback path during any outage → emails routed to Human Officer Queue "
-        "(unified escalation queue for all categories the platform cannot process automatically)\n"
-        "\n"
-        "This constitutes the Business Continuity Plan (BCP) for the AO layer (IM8 requirement): "
-        "manual processing capacity must be verified sufficient for full email volume."
+        "IRAS Recommendation: Option 1 as the primary kill switch, with Option 3 (ACA scale-to-zero) "
+        "as a secondary action invoked 5 minutes later — combining the speed of App Configuration flag "
+        "propagation with the finality of container termination for any agent that fails to respond to "
+        "the flag change."
     )
-    _body(sl, body, Inches(0.75), height=Inches(5.9), font_pt=10.5)
+    _body(sl, body, Inches(0.75), height=Inches(5.75), font_pt=11)
 
 
 # ── Platform Reliability ───────────────────────────────────────────────────────
@@ -1086,7 +1401,14 @@ def main():
     slide_behavioural_audit(prs)
     # Incident Management
     slide_hitl(prs)
-    slide_emergency_stop(prs)
+    slide_emergency_stop_requirements(prs)
+    slide_kill_switch_hierarchy(prs)
+    slide_kill_switch_enforcement(prs)
+    slide_emergency_stop_triggers(prs)
+    slide_emergency_stop_runbook(prs)
+    slide_service_bus_drain(prs)
+    slide_emergency_stop_audit(prs)
+    slide_emergency_stop_options(prs)
     # Platform Reliability & SLAs
     slide_reliability(prs)
     slide_sla(prs)
