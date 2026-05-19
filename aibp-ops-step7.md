@@ -139,14 +139,14 @@ Runbooks are reviewed and updated:
 
 ### RB-01: New Agent Version Production Deployment
 
-**Trigger**: AO team requests promotion of a pre-prod-tested agent version to production canary  
-**Prerequisite**: Stage 3 pre-prod approval from AO team lead already completed in Azure DevOps
+**Trigger**: AO team requests promotion of an ORT-tested agent version to production canary  
+**Prerequisite**: Stage 4 ORT completion sign-off from Ops team lead already recorded in Azure DevOps
 
 | Step | Action | Verification |
 |---|---|---|
 | 1 | Confirm with AO team lead that Stage 3 evaluation passed and the version is ready for canary | AO team lead approval in Azure DevOps pipeline |
 | 2 | Confirm the registry DB record for the version shows `eval_pass = true` and `deployment_status = 'candidate'` | Query: `SELECT semver, eval_pass, deployment_status FROM agent_versions WHERE agent_name = '{name}'` |
-| 3 | Initiate Stage 4 production canary deployment via Azure DevOps pipeline (manual trigger) | — |
+| 3 | Initiate Stage 5 production canary deployment via Azure DevOps pipeline (manual trigger) | — |
 | 4 | Confirm canary ACA revision is live with 10% traffic weight | Azure portal → Container Apps → Revisions → verify new revision shows 10% weight |
 | 5 | Open the AO Operations Dashboard (Azure Monitor Workbook) and verify the canary revision metrics panel is showing data | Dashboard must show both blue and canary revision side-by-side |
 | 6 | Set a calendar reminder for canary review at T+24h and T+48h | — |

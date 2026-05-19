@@ -51,7 +51,7 @@ Each external call in the AO agent's tool execution path is wrapped with a **Ten
 
 | Dependency | Failure threshold (opens circuit) | Reset timeout | Retry before open | Backoff strategy |
 |---|---|---|---|---|
-| Azure OpenAI (gpt-4o) | 3 consecutive failures | 60 seconds | 2 retries with exponential backoff (2s, 4s) | Exponential + jitter |
+| Azure OpenAI (frontier model endpoint) | 3 consecutive failures | 60 seconds | 2 retries with exponential backoff (2s, 4s) | Exponential + jitter |
 | AIGP API | 3 consecutive failures | 30 seconds | 2 retries, 1s fixed | Fixed |
 | Internal microservices (via AIGP) | 5 consecutive failures | 120 seconds | 3 retries exponential (1s, 2s, 4s) | Exponential |
 | Langfuse trace export | 5 consecutive failures | 60 seconds | 3 retries | Exponential (non-blocking — trace export is async; failures do not fail the email processing) |
@@ -102,27 +102,29 @@ Azure OpenAI offers two deployment modes:
 
 **PTU sizing for AIBP**:
 
-At <1,000 emails/day, the peak processing demand can be estimated as follows:
+At <1,000 emails/day, the peak processing demand is estimated using the following sizing methodology. The token counts below are model-agnostic; PTU allocation must be re-derived based on the confirmed frontier model's TPM-per-PTU ratio, which differs from GPT-4o and must be confirmed with the Microsoft/Azure account team before procurement.
 
 | Parameter | Value | Basis |
 |---|---|---|
 | Emails per day | 1,000 | Platform specification |
 | Average emails per hour (business hours) | 1,000 / 9 ≈ 112 emails/hour | Assumes 9-hour business day with concentrated traffic |
-| Average tokens per email (prompt + completion) | ~3,000 tokens | Estimated from SOP complexity (5–7 reasoning steps × ~400 tokens/step) |
-| Token demand per hour | 112 × 3,000 = 336,000 tokens/hour | ≈ 5,600 TPM |
+| Average tokens per email (prompt + completion) | ~2,500–3,500 tokens | Estimated from SOP complexity (5–7 reasoning steps); frontier models may require fewer tokens per step due to stronger reasoning |
+| Token demand per hour | 112 × 3,000 = 336,000 tokens/hour | ≈ 5,600 TPM (midpoint estimate) |
 | Peak burst factor (morning rush) | 2× average | Estimated |
-| Peak TPM required | 5,600 × 2 = **~11,200 TPM** | |
+| Peak TPM required | 5,600 × 2 = **~11,200 TPM** | This is the minimum PTU throughput target |
 
-The current minimum PTU allocation for `gpt-4o` on Azure is **25 PTU**, which provides approximately 40,000 TPM at gpt-4o input token pricing — providing a safety margin of approximately 3.5× above the estimated peak demand at launch scale.
+PTU allocation in units is then: `ceil(Peak TPM required ÷ TPM-per-PTU ratio for the frontier model)`. This ratio must be obtained from Azure at procurement time, as frontier models above GPT-4o have different PTU denominations and minimum commitments.
 
-**PTU benefits**:
+**PTU benefits** (model-independent):
 - Eliminates PAYG rate-limit throttling (HTTP 429 errors) as a failure mode — the primary cause of AO agent circuit-break events in the PAYG model
 - Consistent latency: PTU deployments provide predictable P95 latency; PAYG latency varies with shared tenant load
 - Cost efficiency: At sustained throughput above approximately 50% utilisation of reserved capacity, PTU is cheaper per token than PAYG in Azure's GCC pricing
 
 **PTU in the fallback design**: With PTU eliminating throttling as a failure mode, the circuit breaker configuration for Azure OpenAI above targets genuine service outages and model endpoint errors rather than throttle responses. This simplifies the circuit-open scenarios significantly.
 
-> **Recommendation**: Begin with 25 PTU at launch. Review utilisation via Azure Monitor's PTU utilisation metrics monthly. Adjust allocation if utilisation consistently exceeds 60% (risk of approaching PTU ceiling) or drops below 20% (over-provisioned; revert to PAYG or reduce PTU allocation).
+> **Recommendation**: Confirm the frontier model's PTU minimum commitment and TPM-per-PTU ratio with the Azure account team before finalising the budget. Derive the initial PTU allocation from the sizing methodology above. After ORT load testing (Step 2.2, Stage 4), validate that the allocated PTU is sufficient at 2× daily volume. Review PTU utilisation via Azure Monitor monthly and adjust if utilisation consistently exceeds 60% (risk of approaching PTU ceiling) or drops below 20% (over-provisioned; consider reverting to PAYG or reducing PTU allocation).
+
+> **Note on model deprecation**: PTU is a term commitment. If the frontier model is deprecated by Microsoft mid-term, the PTU commitment may need to be renegotiated. Model lifecycle monitoring is covered in Step 4.3.
 
 **Pros (Option 1 overall)**:
 - Tenacity circuit breakers are a battle-tested Python library; no additional infrastructure required beyond configuration
@@ -183,6 +185,23 @@ Because SWEE is a greenfield system, the SLA targets in this section are propose
 ### Option 1 (Recommended): Multi-Dimensional SLA Framework with Azure Monitor Workbook Dashboards
 
 **Technology Stack**: Azure Monitor (custom metrics, alert rules), Azure Monitor Workbooks (SLA dashboard), Langfuse (quality metric aggregation), Azure Log Analytics (SLA reporting queries)
+
+---
+
+#### SLA Framework Alignment
+
+No single published standard defines SLAs specifically for agentic AI applications as of mid-2026; the field is evolving faster than standards bodies. The AIBP SLA framework is designed to be compatible with the following established frameworks, drawing from each where relevant:
+
+| Framework | Relevance to AIBP SLA design |
+|---|---|
+| **Google SRE — SLI/SLO/SLA + Error Budgets** | The operational layer: SLIs (Service Level Indicators) map to the KPIs in the table below; SLOs are the proposed targets; error budgets provide a principled mechanism for balancing reliability investment against deployment velocity. The canary promotion criteria (Step 2.3) are operationally equivalent to burn-rate alerts on an error budget. |
+| **ISO/IEC 42001:2023** (AI Management Systems) | Section 9 (Performance Evaluation) mandates ongoing monitoring of AI system performance against defined criteria and corrective action. The multi-dimensional KPI framework below — spanning Speed, Quality, Availability, and Cost — satisfies the §9.1 monitoring requirement. |
+| **NIST AI RMF 1.0 — MANAGE function** | MG-2 (ongoing risk monitoring) and MG-4 (performance measurement) are implemented through the continuous EvalOps pipeline (Step 2.4), behavioral anomaly detection (Step 2.7), and the SLA dashboard below. |
+| **Singapore IMDA AI Governance Framework 2nd Ed / AI Verify** | Operational transparency and accountability requirements: the SLA dashboard (shared with management stakeholders) and the monthly SLA report (stored in the compliance evidence repository) provide the documented evidence trail required for AI Verify's Transparency and Accountability principles. |
+| **Azure Well-Architected Framework — AI Workloads** | Microsoft's reliability and performance guidance for Azure-hosted AI workloads; the KPI targets below are calibrated against the WAF's recommended baselines for Azure Container Apps and Azure OpenAI workloads. |
+| **EU AI Act (Article 9 + Annex IV)** | Not binding in Singapore, but establishes the emerging international benchmark for high-risk AI ongoing monitoring obligations. AIBP's continuous eval pipeline and HITL accuracy tracking align with Annex IV's post-market monitoring system requirement. |
+
+> **On agentic-specific SLAs**: Traditional IT SLAs covering only uptime and latency are insufficient for agentic systems, which can be technically available but semantically degraded — agents processing emails but producing incorrect or low-quality outputs. The **Quality** dimension (Dimension 2 below) is AIBP's primary operational differentiator from conventional SLA frameworks, and is the dimension most closely monitored by management stakeholders.
 
 ---
 
@@ -298,3 +317,110 @@ A monthly SLA report is generated automatically by an **Azure Logic Apps** workf
 **Option 1** is recommended. Azure Monitor Workbooks are natively integrated with Application Insights and Log Analytics — the two stores already receiving all AIBP operational metrics. Building the SLA dashboard in Workbooks avoids introducing an additional platform (Power BI Service) for a function that Azure Monitor already supports. The automated monthly report via Logic Apps ensures management visibility without manual extraction effort.
 
 > **Compliance Note (IM8)**: IM8 requires that government IT systems maintain records of system performance and service delivery. The monthly SLA report, stored in the compliance evidence repository, satisfies this requirement. The SLA targets agreed between Ops and the business owner should be documented in a formal Service Level Agreement document, reviewed annually.
+
+---
+
+## 4.3 Model Lifecycle Management
+
+### Implementation Overview
+
+Frontier LLM models on Azure have defined lifecycle dates — a deprecation notice period followed by a retirement date after which the model endpoint is no longer available. For AIBP, an unplanned model endpoint retirement would be an operational P1 event: agents would cease processing entirely until a replacement model is provisioned, configured, and promoted through the full SIT → UAT → ORT → PROD pipeline. Model lifecycle management is the proactive operational practice of tracking deprecation notices and executing model transitions in a controlled, tested manner before the retirement date.
+
+This concern is distinct from App & Data's responsibility for prompt engineering and model selection — App & Data determines *what* replacement model to use and *how* to configure it; Ops owns the *deployment pipeline* for a model version change and the *operational readiness* of the platform on the new model.
+
+---
+
+### Model Lifecycle Operational Process
+
+**Monitoring deprecation notices**: Azure OpenAI publishes model retirement dates in the Azure OpenAI service documentation and via Azure Service Health notifications. The Ops team subscribes to Azure Service Health Health Advisory alerts scoped to the Azure OpenAI resource group (see also Step 4.4). Upon receiving a model deprecation notice, the Ops team initiates the following process:
+
+**Step 1 — Assessment** (within 5 business days of notice):
+- Confirm the retirement date and recommended replacement model from Azure documentation
+- Notify the AO team, AIGP team, and business owner of the retirement timeline
+- Create a Model Migration work item in Azure DevOps, assigned to AO team lead, with the retirement date as the deadline and a **target completion date at least 30 days before retirement**
+
+**Step 2 — Model Update Development** (AO team, led by App & Data):
+- AO team updates model configuration in the agent codebase (`LLM_MODEL_NAME`, PTU endpoint references)
+- AO team updates `agent-manifest.json` evaluation thresholds if the replacement model's baseline scores are expected to differ
+- AO team re-runs the synthetic evaluation suite against the replacement model to confirm eval score compatibility
+- This constitutes a `PATCH` or `MINOR` version bump (no SOP scope change, no tool-contract change)
+
+**Step 3 — Full Pipeline Promotion** (SIT → UAT → ORT → PROD):
+- The model update is promoted through the full SIT → UAT → ORT → PROD pipeline (Step 2.2)
+- **ORT stage receives additional emphasis**: the ORT load test (Stage 4) must be run against the replacement model to confirm that the PTU allocation for the new model is sufficient and that latency and token spend remain within SLA thresholds (see Step 4.1 PTU sizing)
+- Target: complete full pipeline promotion at least **30 days before the retirement date**, providing a rollback buffer if the replacement model introduces regressions
+
+**Step 4 — PTU Contract Review**:
+- If the replacement model has a different PTU denomination or minimum commitment, the Azure account team must be contacted to renegotiate the PTU contract before the current model's retirement date
+- The Ops team coordinates this with the finance sponsor; a PTU contract change is a financial commitment requiring management approval
+
+**Step 5 — Post-Migration Monitoring**:
+- After full production promotion, run an extended **7-day canary monitoring window** (vs. the standard 24–48 hours) for model replacement deployments, due to the broader distribution shift introduced by a different model
+- Flag the deployment in Azure DevOps and Langfuse with a `model-replacement` tag for traceability
+- Compare production token spend per email during the monitoring window against the ORT load test baseline to detect unexpected cost escalation on the new model
+
+---
+
+### Model Fallback Configuration
+
+If the primary frontier model endpoint becomes unavailable (service outage, not retirement), the circuit breaker (Step 4.1) opens after 3 consecutive failures. To prevent all email processing from falling through to the DLQ during a short outage, Ops may optionally configure a **fallback model endpoint**:
+
+- A secondary model (e.g., a lower-tier model still within its lifecycle) is configured in Azure App Configuration: `agents:llm:fallbackEndpoint`
+- If the primary endpoint circuit is open, the agent retries against the fallback endpoint for a configurable grace period (default: 30 minutes)
+- After the grace period, if the primary endpoint has not recovered, the agent routes to the DLQ → Human Officer Queue fallback chain (Step 4.1)
+
+> **Fallback model quality note**: A fallback model is by definition lower-capability than the primary frontier model. Emails processed via the fallback should be flagged with `processedOnFallbackModel: true` in their OTel trace, and considered for routing to HITL review if the quality gap between models is material.
+
+> **Compliance Note (IM8 / ISO 27001 Change Management)**: Model retirement-driven deployments are system changes that must be documented in the change record. The `agent_promotions` registry DB table records the promotion of the updated agent version; the model name change in `agent-manifest.json` provides the traceability link between the deployment event and the model lifecycle trigger.
+
+---
+
+## 4.4 External Dependency Health Monitoring
+
+### Implementation Overview
+
+The AIBP platform's reliability depends on external services that Ops does not provision: Azure OpenAI endpoints, Azure Container Apps, Azure Service Bus, Azure Container Registry, and the AIGP API. The circuit breaker pattern (Step 4.1) handles runtime failures reactively. This section covers **proactive monitoring** — detecting planned maintenance, quota ceilings, and impending lifecycle events before they cause circuit-break events or deployment failures.
+
+---
+
+### Azure Service Health Alerts
+
+Azure Service Health provides three notification categories relevant to AIBP:
+
+| Alert type | What it covers | AIBP relevance |
+|---|---|---|
+| **Service Issues** | Ongoing Azure outages affecting specific services and regions | Azure OpenAI outage → all agent circuit breakers open; ACA issue → agent fleet unavailable; Service Bus issue → email queue disrupted |
+| **Planned Maintenance** | Microsoft-initiated maintenance windows that may temporarily reduce performance | PTU throughput may be reduced; plan no production deployments during announced windows |
+| **Health Advisories** | Service lifecycle notifications — deprecation, retirements, API version changes | Model retirement notices (feed into Step 4.3); ACA or Service Bus API deprecation notices |
+
+**Configuration**:
+1. In Azure Service Health → Health Alerts, create alert rules scoped to: `Azure OpenAI`, `Azure Container Apps`, `Azure Service Bus`, `Azure Container Registry`
+2. Action group: notify Ops team via email + Teams webhook to `#ops-platform-alerts`
+3. **Service Issues**: P2 priority; notify immediately
+4. **Planned Maintenance**: P3 priority; Ops team schedules a review to decide whether to pause deployments during the announced window
+5. **Health Advisories**: P3 priority; triage within 2 business days; model retirement advisories automatically trigger the Step 4.3 lifecycle process
+
+---
+
+### Quota & Capacity Headroom Monitoring
+
+Azure subscriptions have resource quotas. Running close to a quota ceiling without advance notice causes deployment failures. Ops monitors headroom for the following critical quotas:
+
+| Resource | Metric | Alert threshold | Action on alert |
+|---|---|---|---|
+| Azure OpenAI PTU utilisation | `PTUUtilizationPercentage` (Azure Monitor metric) | > 70% sustained over 1 hour | Review token consumption trends; initiate PTU expansion request to Azure account team |
+| Azure OpenAI PAYG TPM (fallback quota) | PAYG consumption during circuit-open periods | > 50% of PAYG quota in any hour | Log as operational event; review if fallback model usage is higher than expected |
+| ACA replica count | Active replicas per agent container app vs. configured `maxReplicas` | > 80% of `maxReplicas` | Review scale-out configuration; raise `maxReplicas` if email volume growth warrants it |
+| ACR storage | Registry storage utilisation | > 70% of quota | Run ACR image purge for deprecated agent versions (`az acr run ... --cmd 'acr purge'`) |
+
+**Quota review cadence**: A quarterly capacity review is conducted by the Ops team. Ops queries current quota limits and utilisation for each resource above, documents the headroom, and flags any resources projected to reach the alert threshold before the next quarterly review based on observed growth trends.
+
+---
+
+### AIGP API Health Monitoring
+
+The AIGP API is an internal dependency, not an Azure service, so Azure Service Health does not cover it. Ops monitors AIGP API health via:
+
+1. **Azure Monitor availability test**: A synthetic probe pings the AIGP API health endpoint (`/health`) every 5 minutes. If 3 consecutive probes fail, a P2 alert fires to Ops and the AIGP team.
+2. **Circuit breaker state metric**: The `ao.circuit.aigp_api.state_change` custom metric (Step 4.1) is the reactive signal when the AIGP circuit opens. The synthetic probe is the proactive signal. Both should be active; neither replaces the other.
+3. **AIGP team maintenance coordination**: When the AIGP team plans a maintenance window, they notify Ops at least 5 business days in advance. Ops posts a maintenance notice to `#ops-platform-alerts` and ensures no production canary deployments (Stage 5, Step 2.2) are scheduled during the window.

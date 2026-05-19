@@ -82,7 +82,7 @@ CREATE TABLE agent_versions (
     deployment_status VARCHAR(20)   NOT NULL    -- 'candidate' | 'canary' | 'active' | 'deprecated' | 'retired'
                       CHECK (deployment_status IN ('candidate','canary','active','deprecated','retired')),
     aca_revision_name VARCHAR(200),             -- ACA revision label (e.g., 'refund-agent--abc123')
-    deployed_env      VARCHAR(20),             -- 'dev' | 'test' | 'preprod' | 'prod'
+    deployed_env      VARCHAR(20),             -- 'sit' | 'uat' | 'ort' | 'prod' (DEV is local-only; no registry entry created)
     deployed_at       TIMESTAMPTZ,
     deployed_by       VARCHAR(200),            -- Azure DevOps pipeline run ID or operator UPN
     deprecated_at     TIMESTAMPTZ,
@@ -186,7 +186,7 @@ Each agent repository must contain an `agent-manifest.json` at its root. This fi
 
 ---
 
-## 2.2 Deployment Lifecycle — Dev → Test → Pre-Prod → Prod
+## 2.2 Deployment Lifecycle — DEV → SIT → UAT → ORT → PROD
 
 ### Implementation Overview
 
@@ -206,12 +206,13 @@ Four environments are provisioned as separate **ACA Environments** (ACA's logica
 
 | Environment | Purpose | Azure OpenAI quota | Who deploys | Manual gate required |
 |---|---|---|---|---|
-| `dev` | Local iteration; developer-controlled | Shared, limited (PTU-free) | Developer (feature branch push) | No |
-| `test` | Automated CI evaluation against synthetic emails | Dedicated test quota | CI pipeline (PR merge to `main`) | No |
-| `preprod` | Full integration test; replica of production topology | Shared preprod quota | CD pipeline (manual trigger) | Yes — AO team lead |
-| `prod` | Live taxpayer email processing | PTU (see Step 4.1) | CD pipeline (manual trigger) | Yes — AO team lead + Ops |
+| `dev` | Local development and unit testing only; developer-controlled; no ACA or Service Bus infrastructure involved | None (local mocks or personal dev key; no CI/CD trigger on feature branch push) | Developer (local only) | No |
+| `sit` | Automated CI evaluation against synthetic emails; integration tests against actual SIT Service Bus and test microservice stubs; AIGP called against stubs | Dedicated SIT quota (PTU-free) | CI pipeline (automated on PR merge to `main`) | No |
+| `uat` | Business acceptance testing by tax officers and business owner using redacted real-pattern email dataset | Shared UAT quota (PTU-free) | CD pipeline (manual trigger by AO team lead) | Yes — AO team lead (to promote); Business owner (UAT sign-off before Stage 4) |
+| `ort` | Operational readiness: load test, BCP drill, live AIGP MCP server tool call validation, monitoring verification | Shared ORT quota (PTU-free) | CD pipeline (manual trigger by Ops team lead; requires recorded UAT sign-off) | Yes — Ops team lead |
+| `prod` | Live taxpayer email processing | Provisioned Throughput Units (PTU) — see Step 4.1 | CD pipeline (manual trigger) | Yes — AO team lead + Ops team lead (Azure DevOps two-approver policy) |
 
-> **SOC Note**: The `dev` environment is explicitly excluded from SOC log streaming. Only `preprod` and `prod` emit logs to the SOC pipeline. The `test` environment emits logs to Azure Monitor only.
+> **SOC Note**: `dev` and `sit` are excluded from SOC log streaming. `uat` emits to Azure Monitor only. **`ort` and `prod`** emit to the Non-PII Log Analytics Workspace (Non-PII LAW), which the SOC team monitors via the existing AIGP/microservices monitoring integration.
 
 ---
 
@@ -225,25 +226,39 @@ Four environments are provisioned as separate **ACA Environments** (ACA's logica
 4. Sign image using Notation; verify signature before proceeding
 5. Register the new version in the registry DB with `deployment_status = 'candidate'`
 
-**Stage 2 — Test Environment Deployment & Evaluation** (automatic, post-Stage 1)
+**Stage 2 — SIT Deployment & Automated Evaluation** (automatic, post-Stage 1)
 
-1. Deploy candidate image to `test` ACA environment
+1. Deploy candidate image to `sit` ACA environment
 2. Run **Synthetic Email Evaluation Suite** (100 pre-labelled synthetic emails per SOP category, stored in Langfuse as a versioned dataset):
    - **Structural assertions** (pytest): Did the agent call the correct tools? In the correct order? Did it avoid calling unauthorised tools?
-   - **Semantic reasoning evaluation** (Azure AI Evaluation SDK + GPT-4o as judge): Faithfulness score, answer relevance score, task completion score, hallucination rate
+   - **Semantic reasoning evaluation** (Azure AI Evaluation SDK + frontier model as judge): Faithfulness score, answer relevance score, task completion score, hallucination rate
    - **Regression check**: Compare composite eval score against the current `active` version's score in the registry DB. Block promotion if the new version's composite score is more than 5% lower than the current active version.
-3. Write eval scores back to `agent_versions` row in registry DB (`eval_score`, `eval_pass`)
-4. If any assertion fails or eval scores are below the thresholds declared in `agent-manifest.json → evalThresholds`: pipeline fails; AO team is notified; version remains `candidate`
+3. Run **SIT integration tests** against actual SIT-environment instances of Service Bus and test microservice stubs — verify that tool invocations complete end-to-end at the transport and schema level. AIGP is called against stubs in SIT; live AIGP MCP server tool call testing is reserved for ORT (Stage 4).
+4. Write eval scores back to `agent_versions` row in registry DB (`eval_score`, `eval_pass`)
+5. If any assertion fails or eval scores are below the thresholds declared in `agent-manifest.json → evalThresholds`: pipeline fails; AO team is notified; version remains `candidate`
 
-**Stage 3 — Pre-Prod Deployment** (manual trigger by AO team lead)
+> **Langfuse in SIT**: SIT processes synthetic data only (no PII risk). In SIT, a direct OTel → Langfuse exporter is active so trace data arrives in Langfuse immediately for the CI evaluation pipeline. The pull-from-Non-PII-LAW architecture (Step 2.5) applies from UAT onwards.
 
-1. **Manual approval gate** in Azure DevOps: AO team lead reviews evaluation report before approving
-2. Deploy to `preprod` ACA environment with **100% traffic weight** (blue-green: new revision receives all traffic)
-3. Run **integration tests**: real inbound email flow with redacted real-pattern emails (no live taxpayer data; uses email patterns derived from historical cases with PII removed)
+**Stage 3 — UAT Deployment** (manual trigger by AO team lead; business owner sign-off required before Stage 4)
+
+1. **Manual approval gate**: AO team lead reviews SIT evaluation report before approving promotion
+2. Deploy to `uat` ACA environment with **100% traffic weight** (no canary needed in UAT)
+3. Run **business acceptance testing**: tax officers and business owner test the agent against the **UAT test dataset** — a maintained set of redacted real-pattern emails (derived from historical cases with PII removed, owned and curated by the business/officer team, separate from the synthetic CI dataset)
+4. Ops team uses the UAT deployment to verify that monitoring dashboards, alert rules, and Langfuse trace views (fed via the Non-PII LAW adapter, Step 2.5) are correctly populated — a dry run of operational tooling ahead of ORT
+5. **Business owner sign-off gate**: business owner formally approves in Azure DevOps; Stage 4 cannot be triggered until this approval is recorded
+
+**Stage 4 — ORT Deployment** (manual trigger by Ops team lead; requires UAT sign-off to be recorded in Azure DevOps)
+
+1. **Manual approval gate**: Ops team lead confirms business owner UAT sign-off is recorded before triggering ORT deployment
+2. Deploy to `ort` ACA environment with **100% traffic weight**
+3. Run **AIGP MCP server tool call validation**: execute a controlled sequence of tool calls against the live ORT-environment AIGP MCP server for every tool declared in `agent-manifest.json`. Verify each tool returns the expected response format, AIGP policy enforcement (`PERMITTED`/`BLOCKED`) behaves correctly, and AIGP risk scores fall within expected ranges. This is the first stage at which tool calls are made against the live AIGP service rather than stubs.
 4. Run **load test** (Azure Load Testing): simulate 2× expected daily volume over 1 hour; verify P95 latency and token spend remain within thresholds
-5. Ops team reviews preprod Azure Monitor Workbook for 24 hours post-deployment
+5. Run **BCP drill**: simulate Azure OpenAI endpoint unavailability; verify the DLQ → Human Officer Queue fallback chain activates correctly (Step 4.1)
+6. Verify all monitoring, alert rules, runbooks, and HITL queue are correctly configured — confirm ORT Azure Monitor Workbook, canary dashboard, and Langfuse eval views are all functional
+7. Ops team reviews ORT Azure Monitor Workbook for **24 hours** post-deployment
+8. **Ops team lead ORT completion sign-off**: formally recorded in Azure DevOps before Stage 5 can be triggered
 
-**Stage 4 — Production Canary Deployment** (manual trigger by AO team lead + Ops sign-off)
+**Stage 5 — Production Canary Deployment** (manual trigger by AO team lead + Ops team lead; two-approver policy)
 
 1. **Double manual approval gate**: AO team lead + Ops team lead must both approve (Azure DevOps two-approver policy)
 2. Deploy new revision to `prod` ACA environment; assign **10% traffic weight** (canary)
@@ -258,12 +273,12 @@ Four environments are provisioned as separate **ACA Environments** (ACA's logica
 - All gates and approvals are recorded in Azure DevOps and the registry DB — satisfies ISO 27001 change audit trail requirements
 - Synthetic email dataset in Langfuse provides a version-controlled, reproducible evaluation baseline
 - Double approval for production prevents unilateral deployment
-- Environment isolation prevents test/preprod load from consuming production Azure OpenAI quota
+- Environment isolation prevents SIT/ORT load from consuming production Azure OpenAI quota
 
 **Cons**:
 - Multi-stage pipeline adds elapsed time to the deployment lifecycle (a patch can take 24–72 hours from merge to full production, depending on approval turnaround)
 - Synthetic evaluation dataset requires ongoing curation — as officer audit data accumulates (Step 1.2), it should be used to refresh and extend the synthetic dataset
-- Pre-Prod integration tests require a continuously maintained set of redacted real-pattern emails
+- UAT business acceptance tests require a continuously maintained set of redacted real-pattern emails, owned and curated by the business/officer team; this dataset must be updated as SOPs or email patterns change
 
 ---
 
@@ -331,7 +346,7 @@ Azure Container Apps natively supports **revision-based traffic splitting**, mak
 
 ACA applies traffic splitting at the HTTP level (for synchronous trigger scenarios) and at the Service Bus consumer level — the 10% canary weight means the Green revision's Service Bus consumer group processes approximately 10% of incoming messages. This is achieved by setting `maxConcurrentCalls` on the Service Bus trigger binding for each revision proportionally.
 
-> **Important**: ACA traffic splitting for Service Bus consumers is controlled via scale rules and `maxConcurrentCalls` on the Service Bus trigger, not via HTTP routing weights. The Ops team must verify that the AO team's ACA deployment configuration correctly implements proportional consumption, not just HTTP traffic splitting. This should be validated in the pre-prod load test (Step 2.2, Stage 3).
+> **Important**: ACA traffic splitting for Service Bus consumers is controlled via scale rules and `maxConcurrentCalls` on the Service Bus trigger, not via HTTP routing weights. The Ops team must verify that the AO team's ACA deployment configuration correctly implements proportional consumption, not just HTTP traffic splitting. This should be validated in the ORT load test (Step 2.2, Stage 4).
 
 ---
 
@@ -367,7 +382,7 @@ LLMs produce different outputs for the same input on different runs. This means 
 - Canary exposure limits the number of taxpayer emails affected by a regression before rollback (at 10% weight and <1,000 emails/day, a regression is limited to ~100 emails/day maximum before the 4-hour metric check)
 
 **Cons**:
-- Service Bus consumer-proportional traffic splitting requires careful ACA trigger configuration; must be validated in pre-prod
+- Service Bus consumer-proportional traffic splitting requires careful ACA trigger configuration; must be validated in ORT
 - Canary window (24–72 hours) means a hotfix patch takes at minimum 24 hours to reach 100% production, even in an emergency. The Emergency Stop mechanism (Step 3.2) should be used for critical safety issues that cannot wait for canary completion.
 - Two-metric trigger for rollback means a single severe regression in one metric does not auto-rollback; Ops team must monitor the canary dashboard
 
@@ -420,7 +435,7 @@ EvalOps runs at two points:
 
 ### Option 1 (Recommended): Three-Layer Evaluation — Structural Assertions + LLM-as-a-Judge + HITL Feedback Integration
 
-**Technology Stack**: Azure AI Evaluation SDK, pytest + pytest-asyncio, Azure OpenAI (GPT-4o as judge), Langfuse (self-hosted, dataset and scoring management), Azure Container Apps Job (evaluation batch runner)
+**Technology Stack**: Azure AI Evaluation SDK, pytest + pytest-asyncio, Azure OpenAI (frontier model as judge), Langfuse (self-hosted, dataset and scoring management), Azure Container Apps Job (evaluation batch runner)
 
 ---
 
@@ -449,11 +464,11 @@ These checks evaluate the semantic quality of agent reasoning — dimensions tha
 
 | Metric | Definition | Tools | Threshold |
 |---|---|---|---|
-| **Task Completion** | Did the agent successfully resolve the taxpayer's query (as intended by the SOP)? | GPT-4o judge | ≥ 0.85 |
-| **Faithfulness** | Are the agent's statements grounded in the information retrieved from taxpayer records (no hallucination of facts)? | GPT-4o judge | ≥ 0.90 |
-| **Tool-Call Relevance** | Were the tools called relevant to the task, or did the agent call unnecessary tools (wasted API calls / cost)? | Rule-based + GPT-4o | ≥ 0.88 |
-| **Response Appropriateness** | Is the final email response appropriate for a government tax authority communication (tone, accuracy, no unsolicited advice)? | GPT-4o judge | ≥ 0.85 |
-| **Hallucination Rate** | % of agent outputs that contain unsupported factual claims about the taxpayer | GPT-4o judge (binary per output) | ≤ 0.03 |
+| **Task Completion** | Did the agent successfully resolve the taxpayer's query (as intended by the SOP)? | Frontier model judge | ≥ 0.85 |
+| **Faithfulness** | Are the agent's statements grounded in the information retrieved from taxpayer records (no hallucination of facts)? | Frontier model judge | ≥ 0.90 |
+| **Tool-Call Relevance** | Were the tools called relevant to the task, or did the agent call unnecessary tools (wasted API calls / cost)? | Rule-based + frontier model | ≥ 0.88 |
+| **Response Appropriateness** | Is the final email response appropriate for a government tax authority communication (tone, accuracy, no unsolicited advice)? | Frontier model judge | ≥ 0.85 |
+| **Hallucination Rate** | % of agent outputs that contain unsupported factual claims about the taxpayer | Frontier model judge (binary per output) | ≤ 0.03 |
 
 **Composite score**: `0.25 × TaskCompletion + 0.30 × Faithfulness + 0.20 × ToolCallRelevance + 0.15 × ResponseAppropriateness + 0.10 × (1 - HallucinationRate)`. The composite score must meet the `minCompositeScore` declared in the agent's `agent-manifest.json`.
 
@@ -493,7 +508,7 @@ As agents process real emails in production, tax officers occasionally correct a
 - Langfuse self-hosted provides dataset versioning, score aggregation, and trace annotation in a single tool
 
 **Cons**:
-- GPT-4o-as-judge adds evaluation token cost; at 100 synthetic cases per eval run and ~500 tokens per evaluation call, this is approximately 50,000 tokens per CI eval run (~SGD 0.10 per run — negligible)
+- Frontier-model-as-judge adds evaluation token cost; at 100 synthetic cases per eval run and ~500 tokens per evaluation call, this is approximately 50,000 tokens per CI eval run (cost depends on confirmed frontier model pricing — expected to remain operationally negligible relative to production token spend)
 - LLM judges have known biases (preference for longer responses, position bias in ranked comparisons). These biases are mitigated by the faithfulness and hallucination rate metrics, which use constrained binary evaluation prompts rather than open-ended ranking
 
 ---
@@ -515,7 +530,7 @@ As agents process real emails in production, tax officers occasionally correct a
 
 ### Recommendation Justification
 
-**Option 1** is recommended. The three-layer architecture is justified because each layer catches a category of failure that the others cannot. No single evaluation approach can cover all failure modes of an LLM agent: Layer 1 catches procedural errors instantly (before spending GPT-4o tokens on evaluation), Layer 2 catches reasoning quality regressions against a controlled benchmark, and Layer 3 grounds evaluation in ground truth from real production behaviour.
+**Option 1** is recommended. The three-layer architecture is justified because each layer catches a category of failure that the others cannot. No single evaluation approach can cover all failure modes of an LLM agent: Layer 1 catches procedural errors instantly (before spending frontier model tokens on evaluation), Layer 2 catches reasoning quality regressions against a controlled benchmark, and Layer 3 grounds evaluation in ground truth from real production behaviour.
 
 > **Compliance Note (IM8)**: Evaluation results (scores, pass/fail, eval dataset versions) must be retained as part of the change record for each agent version deployment. Langfuse trace and score data constitute part of this record.
 
@@ -555,13 +570,19 @@ LangGraph is instrumented using the **`openinference-instrumentation-langchain`*
 - Each LLM call (`ChatOpenAI.invoke`) as a child span with token counts and model name
 - Each tool call as a child span with tool name, input parameters, output, and latency
 
-The OTel SDK is configured with two exporters running in parallel:
+The OTel SDK is configured with a **single primary exporter**: the **Azure Monitor OTel Distro** exporter, which writes all spans and metrics to Azure Application Insights. App Insights is the short-term operational debugging store, retaining raw trace data for **90 days**.
 
-1. **Azure Monitor OTel Distro exporter**: Exports spans and metrics to Azure Application Insights. This is used for aggregate operational metrics, SLA dashboards, and alert rules.
+Langfuse receives trace data via a **pull-based pipeline** from the Non-PII Log Analytics Workspace (Non-PII LAW) — not via a direct OTel exporter. The full trace pipeline is:
 
-2. **Langfuse OTel exporter** (`langfuse.otel.LangfuseSpanExporter`): Exports the full trace (all spans) to Langfuse for detailed trace inspection, eval scoring, and HITL annotation.
+1. **OTel → Azure Monitor (App Insights)**: All spans exported in real time. App Insights retains raw traces for 90 days, providing the operational debugging window for incident investigations within that period.
 
-The two-exporter pattern means: aggregate signals go to Azure Monitor (operational view), detailed trace data goes to Langfuse (debugging and evaluation view). This separation avoids bloating Application Insights with high-cardinality trace data while still retaining full trace fidelity in Langfuse.
+2. **App Insights → PII Masking Pipeline → Non-PII LAW**: A scheduled Azure Container Apps Job (`trace-masking-export`) exports spans from App Insights, applies the PII masking rules described in this section (hash reference substitution, tool output summarisation), and ingests the masked records into the organisation's Non-PII LAW. The SOC team monitors the Non-PII LAW for security events across the AIGP/microservices layer; AIBP events are added to this same workspace, aligning with the organisation's existing monitoring architecture.
+
+3. **Non-PII LAW → Langfuse (via adapter job)**: A **Langfuse adapter job** (`langfuse-trace-adapter`, Azure Container Apps Job) runs on a configurable schedule (default: every 15 minutes). It queries the Non-PII LAW via the Azure Log Analytics Query API and pushes trace records to Langfuse's ingest API. The adapter cadence must be shorter than the 4-hour canary eval batch window (Step 2.3) to ensure trace coverage is complete at each evaluation run.
+
+> **SIT exception**: The SIT environment processes synthetic data only. In SIT, a direct OTel → Langfuse exporter is enabled in addition to the Azure Monitor exporter, so trace data is available in Langfuse immediately for the CI evaluation pipeline (Stage 2, Step 2.2). The pull-from-Non-PII-LAW pipeline applies from UAT onwards, where real-pattern or live taxpayer data is involved.
+
+> **Why not a direct Langfuse exporter in production?**: The organisation maintains a Non-PII LAW / PII LAW separation requirement. The AIGP team's SOC monitoring consumes from the Non-PII LAW. Routing AIBP traces through the same Non-PII LAW ensures all trace data visible outside the AO layer has been consistently masked, and eliminates a separate SOC data feed. After the 90-day App Insights window, the Non-PII LAW becomes the queryable operational store for historical trace investigation.
 
 #### Span Hierarchy for a Single Email Processing Event
 
@@ -625,13 +646,13 @@ An Azure Monitor Workbook (`AO-Operations-Dashboard`) provides the operational h
 
 **Pros**:
 - OpenInference conventions ensure the trace format is portable — if Langfuse is replaced in future, traces remain interpretable by any compatible backend
-- Two-exporter pattern provides both aggregate (Azure Monitor) and per-trace (Langfuse) views without duplication
+- Single data governance boundary: all trace data reaching Langfuse or SOC has passed through the same masking pipeline, eliminating the risk of inconsistent field exposure across separate export paths
 - LangGraph auto-instrumentation means the AO team does not need to write manual OTel span code for standard graph nodes — only custom tool calls require explicit span attributes
-- Fully GCC 2.0-compliant: Azure Monitor is Azure-native; Langfuse is self-hosted within the boundary
+- Fully GCC 2.0-compliant: Azure Monitor is Azure-native; Langfuse is self-hosted within the boundary; AIBP SOC integration reuses the existing Non-PII LAW without introducing new services
 
 **Cons**:
-- Two exporters mean trace data exists in two stores (Azure Monitor and Langfuse); query routing (which tool for which question) must be documented for Ops
-- Langfuse's OTel exporter is relatively new; verify stability and version pinning in production
+- Langfuse trace data has an ingestion lag equal to the adapter job cadence (default 15 minutes) compared to the prior real-time OTel export pattern; production eval and canary monitoring must account for this lag in their scheduling
+- The `trace-masking-export` and `langfuse-trace-adapter` jobs add two operational components to maintain; their schedules and failure modes must be covered by runbooks
 - High trace volume (though at <1,000 emails/day, this is modest) requires Langfuse PostgreSQL storage capacity planning over time
 
 ---
@@ -674,9 +695,9 @@ This record must be **tamper-evident** — no one (including Ops or the AO team)
 
 ---
 
-### Option 1 (Recommended): Append-Only Azure Cosmos DB Audit Ledger + Event Hubs for SOC Streaming
+### Option 1 (Recommended): Append-Only Azure Cosmos DB Audit Ledger + Non-PII LAW SOC Integration
 
-**Technology Stack**: Azure Cosmos DB for NoSQL (append-only enforcement), Azure Event Hubs, Azure Key Vault (encryption), Azure Blob Storage (long-term archive)
+**Technology Stack**: Azure Cosmos DB for NoSQL (append-only enforcement), Azure Key Vault (encryption), Azure Blob Storage (long-term archive), Non-PII Log Analytics Workspace (SOC integration — shared with AIGP/microservices monitoring)
 
 ---
 
@@ -699,7 +720,7 @@ Each email processing event produces one audit document written to a Cosmos DB c
     {
       "stepId": 1,
       "type": "llm_reasoning",
-      "modelName": "gpt-4o",
+      "modelName": "<frontier-model-name>",
       "inputSummary": "Taxpayer query classified as refund status enquiry. SOP: REFUND-001.",
       "outputSummary": "Plan: retrieve record, check status, respond if pending, escalate if error.",
       "tokenCount": { "prompt": 512, "completion": 148 },
@@ -753,11 +774,13 @@ Each email processing event produces one audit document written to a Cosmos DB c
 
 ---
 
-#### Event Hubs for SOC Streaming
+#### SOC Integration via Non-PII Log Analytics Workspace
 
-A parallel, operationally informative (not audit-grade) event stream is published to **Azure Event Hubs** for consumption by the Internal SOC and GovTech SOC:
+A parallel, operationally informative (not audit-grade) event stream is written to the **Non-PII Log Analytics Workspace (Non-PII LAW)** as part of the trace masking pipeline described in Step 2.5 (`trace-masking-export` job). The Internal SOC and GovTech SOC consume these events from the Non-PII LAW — the same workspace they already use for AIGP/microservices security monitoring. No separate Event Hubs service is required.
 
-**Events published** (anonymised application telemetry — no taxpayer content):
+The `trace-masking-export` job enforces the PII masking rules before writing any record to the Non-PII LAW. AIBP events are distinguished from AIGP events in the workspace by a `Platform: 'AIBP'` attribute in the record's custom dimensions, enabling SOC to query AIBP events independently or in correlation with AIGP/microservices events.
+
+**Events in Non-PII LAW** (anonymised application telemetry — no taxpayer content):
 
 | Event type | Fields included | Fields explicitly excluded |
 |---|---|---|
@@ -767,16 +790,16 @@ A parallel, operationally informative (not audit-grade) event stream is publishe
 | `agent.hitl.escalated` | `messageId`, `agentName`, `escalationReason` (category only), `timestamp` | Officer identity, taxpayer details |
 | `agent.error` | `messageId`, `agentName`, `errorCode`, `errorCategory`, `timestamp` | Stack traces with application internals (sanitised before publishing) |
 
-**Event Hubs capture**: Azure Event Hubs Capture is enabled to write event batches to Azure Blob Storage (SOC-owned storage account) at 5-minute intervals. SOC teams consume from this storage rather than needing direct Event Hubs connectivity.
+> **Separation from the Cosmos DB audit ledger**: The Non-PII LAW event stream is operationally informative for SOC security monitoring. It is not the compliance audit record. The Cosmos DB append-only ledger (above) remains the authoritative tamper-evident compliance record, maintained independently of and separately from the Non-PII LAW.
 
 **Pros**:
 - Append-only Cosmos DB with RBAC-enforced no-delete provides a tamper-evident record that can withstand audit scrutiny
 - Analytical store + Synapse Link enables complex audit queries over years of data without impacting operational performance
-- Event Hubs SOC stream satisfies SOC monitoring requirements without exposing sensitive data — the schema explicitly enumerates every excluded field, providing a clear data-sharing agreement
+- Non-PII LAW SOC integration reuses the organisation's existing monitoring infrastructure — no new Event Hubs service to provision, secure, or operate; SOC can correlate AIBP events with AIGP/microservices events in a single KQL query
 
 **Cons**:
 - Cosmos DB costs are usage-based (RU/s + storage); at <1,000 emails/day with ~5 steps/email, this is approximately 5,000 documents/day — modest cost (approximately SGD 30–50/month at autoscale settings)
-- Event Hubs adds another service to manage; at low email volumes, a Log Analytics workspace export to SOC could suffice, but Event Hubs provides a cleaner data-sharing boundary
+- Log Analytics has ingestion latency (typically 2–5 minutes) compared to near-real-time Event Hubs streaming; this is acceptable for SOC security analysis but means security alerting on AIBP events has a short lag
 - RBAC-enforced append-only on Cosmos DB requires custom Cosmos DB role definitions (not available through the portal; must be created via ARM template or Terraform)
 
 ---
@@ -796,7 +819,7 @@ A parallel, operationally informative (not audit-grade) event stream is publishe
 
 ### Recommendation Justification
 
-**Option 1** is recommended. The Cosmos DB append-only ledger provides the query performance needed for incident investigation (find all actions by agent version X in the last 6 hours) while the RBAC controls provide adequate tamper-evidency for compliance. The Event Hubs SOC stream cleanly separates compliance audit data from security monitoring data — SOC receives real-time operational events without receiving audit ledger content that would pose data governance risks.
+**Option 1** is recommended. The Cosmos DB append-only ledger provides the query performance needed for incident investigation (find all actions by agent version X in the last 6 hours) while the RBAC controls provide adequate tamper-evidency for compliance. The Non-PII LAW SOC integration cleanly separates compliance audit data from security monitoring data, and aligns with the organisation's existing AIGP/microservices monitoring architecture — SOC receives the same anonymised event format through the same workspace they already operate, without exposure to audit ledger content that would pose data governance risks.
 
 > **Compliance Note (PDPA)**: The audit ledger is a processing record under PDPA. The data minimisation design (hash references, summarised outputs) must be validated with the organisation's Data Protection Officer (DPO) to confirm that the record does not constitute a personal data store under PDPA definitions. If the hash-to-taxpayer mapping is held by internal microservices and the audit ledger holds only hashes, the ledger may qualify as pseudonymised data rather than personal data — a material distinction for PDPA obligations.
 

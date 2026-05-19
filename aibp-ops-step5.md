@@ -55,14 +55,16 @@ Every email processing event must produce a cost record attributing the Azure Op
 | `cost.total.usd` per email | `cost.tokens.usd + cost.compute.usd` | Log Analytics custom table `AIBPEmailCosts` |
 | `cost.total.sgd` per email | `cost.total.usd × fx_rate` (FX rate refreshed daily from Azure Cost Management) | Log Analytics custom table `AIBPEmailCosts` |
 
-**Azure OpenAI token pricing** (as of May 2026, GCC 2.0 `gpt-4o` PTU model — verify current rates at billing time):
+**Azure OpenAI token pricing** (frontier model — confirm GCC 2.0 rates at time of procurement):
 
-| Component | Rate (illustrative — verify with Azure pricing) |
+| Component | Rate |
 |---|---|
-| GPT-4o prompt tokens | USD 0.0025 / 1,000 tokens |
-| GPT-4o completion tokens | USD 0.010 / 1,000 tokens |
+| Frontier model — prompt tokens (e.g., GPT-5 or next-generation equivalent) | TBC: confirm with Azure/Microsoft account team; indicatively 3–5× higher than GPT-4o rates |
+| Frontier model — completion tokens | TBC: confirm with Azure account team; indicatively 3–5× higher than GPT-4o completion rates |
 | text-embedding-3-small (Step 2.7 anomaly detection) | USD 0.00002 / 1,000 tokens |
-| GPT-4o-mini (Tier 0 EvalOps, Step 1.2 — if implemented) | USD 0.00015 / 1,000 prompt; USD 0.0006 / 1,000 completion |
+| Frontier model — small/reasoning variant (Tier 0 EvalOps, Step 1.2 — if available; otherwise a lower-cost variant) | TBC: confirm with Azure |
+
+> **Note on frontier model pricing**: As of mid-2026, frontier models on Azure above GPT-4o (such as GPT-5 or equivalent) do not have stable, publicly listed PTU pricing. Actual rates must be confirmed with the Microsoft/Azure account team under the organisation's GCC 2.0 commercial agreement. The cost model variables (`FRONTIER_MODEL_PROMPT_PRICE_PER_1K`, `FRONTIER_MODEL_COMPLETION_PRICE_PER_1K`) in the `finops-cost-aggregator` job should be stored in Azure App Configuration and updated when pricing is confirmed, rather than being hardcoded. While frontier models carry higher per-token costs, stronger reasoning capability typically results in fewer tool-call loops and hallucination retries per email — partially offsetting the cost increase. The actual net per-email cost must be baselined empirically from SIT and the first 30 days of production data.
 
 **Cost record schema** (`AIBPEmailCosts` Log Analytics custom table):
 
@@ -115,17 +117,17 @@ Azure Cost Management budget alerts are configured at three levels:
 | Azure OpenAI monthly budget alert (forecast) | Forecasted monthly spend exceeds 90% of monthly budget | Notify Ops + finance sponsor |
 | Azure OpenAI monthly budget alert (actual) | Actual spend exceeds 100% of monthly budget | Emergency notify: Ops lead + CIO-level sponsor; consider reducing per-session token budget |
 
-**Estimated monthly Azure OpenAI cost** (indicative):
+**Estimated monthly Azure OpenAI cost** (indicative — pending confirmed frontier model pricing):
 
 | Component | Monthly estimate |
 |---|---|
-| GPT-4o (production, <1,000 emails/day × 3,000 tokens avg × 31 days) | ~93M tokens/month → ~USD 1,395/month PTU flat rate (25 PTU) |
-| GPT-4o-mini (Tier 0 critic, low-confidence subset) | ~USD 5/month |
+| Frontier model (production, <1,000 emails/day × estimated ~3,000 tokens avg × 31 days) | TBC: token volume similar to GPT-4o estimate; per-token cost 3–5× higher pending PTU pricing confirmation. Empirical baselining in SIT required before production budget is set. |
+| Frontier model — small variant (Tier 0 critic, low-confidence subset) | TBC: confirm with Azure |
 | text-embedding-3-small (anomaly detection) | ~USD 2/month |
-| Langfuse GPT-4o-judge eval (CI pipeline, per-deploy) | ~USD 1–3 per deploy, ~USD 10–30/month |
-| **Total estimated Azure OpenAI monthly cost** | **~USD 1,410/month (≈ SGD 1,890/month)** |
+| Frontier model — judge eval (CI pipeline eval runs, per-deploy) | ~USD 3–10 per deploy depending on model pricing; ~USD 30–100/month estimated |
+| **Total estimated Azure OpenAI monthly cost** | **TBC: pending confirmed frontier model pricing. For planning purposes, assume 3–5× the equivalent GPT-4o estimate (~USD 1,400/month). Validate against actual SIT token consumption data before committing to a production budget.** |
 
-> These are indicative estimates based on the pricing noted above. Actual costs depend on validated token counts, PTU negotiated pricing, and FX rates at time of operation. The FinOps job should be used to establish actual per-email costs within the first 30 days of production and to validate or revise the estimates above.
+> These are indicative estimates. The FinOps job should be used to establish actual per-email costs within the first 30 days of production (and during SIT) and to validate or revise the budget.
 
 ---
 
@@ -198,10 +200,10 @@ Using illustrative values (SGD 80,000 salary + 35% overhead = SGD 108,000/year; 
 
 | Component | Value |
 |---|---|
-| Azure OpenAI token cost per email | ~SGD 0.07–0.14 (based on USD 1,410/month ÷ 22,000 emails/month) |
+| Frontier model token cost per email | TBC: indicatively 3–5× higher than GPT-4o equivalent (~SGD 0.21–0.70/email before efficiency gains); to be baselined from first 30 days of production data |
 | ACA compute cost per email | ~SGD 0.01–0.02 |
 | Allocated infrastructure cost per email | ~SGD 0.02 (Service Bus, Cosmos DB, Langfuse, support services, amortised monthly) |
-| **Agent total cost per automated resolution** | **~SGD 0.10–0.18/email** |
+| **Agent total cost per automated resolution** | **TBC: estimated SGD 0.25–0.75/email at frontier model pricing; validate from production data. Even at the upper estimate, the agent-vs-human cost advantage remains very large (see Step 5.2).** |
 
 > These are illustrative estimates. The FinOps job in Step 5.1 will produce the actual agent cost per email from the first 30 days of production data. The model below uses the actual figure once available; `cost.total.sgd` from the `AIBPEmailCosts` table is the source.
 

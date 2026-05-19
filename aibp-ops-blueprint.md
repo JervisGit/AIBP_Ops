@@ -46,11 +46,11 @@ Email → SWEE → AO → AIGP → Internal DB/Microservices
 
 ### Step 2 — Agentic Orchestration Operations (AO)
 - **2.1** Agent Fleet & Version Registry: SemVer, signed container images, PostgreSQL registry DB
-- **2.2** Deployment Lifecycle: Dev → Test → Pre-Prod → Prod via Azure DevOps multi-stage pipelines
+- **2.2** Deployment Lifecycle: DEV (local) → SIT → UAT → ORT → PROD via Azure DevOps multi-stage pipelines; AIGP MCP server tool call validation in ORT
 - **2.3** Testing Strategy: Blue-Green + Canary via ACA traffic weight splitting
 - **2.4** EvalOps: Azure AI Evaluation SDK + Langfuse (self-hosted) + LLM-as-a-Judge
-- **2.5** Observability & Distributed Tracing: OpenTelemetry + OpenInference → Azure Monitor + Langfuse
-- **2.6** Behavioral Auditing & Traceability: Append-only CosmosDB audit ledger + Event Hubs for SOC
+- **2.5** Observability & Distributed Tracing: OpenTelemetry + OpenInference → Azure Monitor (App Insights, 90-day raw) → masking pipeline → Non-PII LAW → Langfuse adapter
+- **2.6** Behavioral Auditing & Traceability: Append-only CosmosDB audit ledger; SOC integration via Non-PII LAW (replacing Event Hubs)
 - **2.7** Behavioral Anomaly Detection: Embedding-based behavioral baseline comparison
 
 ### Step 3 — Governance & Control Operations (AIGP)
@@ -59,8 +59,10 @@ Email → SWEE → AO → AIGP → Internal DB/Microservices
 - **3.3** RiskOps: Policy-as-code (OPA), Azure Defender, PDPA/IM8/ISO 27001 posture
 
 ### Step 4 — Platform Reliability Operations
-- **4.1** ResiliencyOps: Circuit breakers, DLQ fallback, Azure OpenAI PTU sizing
-- **4.2** SLA Management: KPI definitions, measurement framework, Azure Monitor Workbooks
+- **4.1** ResiliencyOps: Circuit breakers, DLQ fallback, Azure OpenAI PTU sizing (frontier model)
+- **4.2** SLA Management: KPI definitions, SLA framework alignment (Google SRE / ISO 42001 / NIST AI RMF / IMDA), Azure Monitor Workbooks
+- **4.3** Model Lifecycle Management: Deprecation tracking, model migration pipeline, PTU contract review, fallback model configuration
+- **4.4** External Dependency Health Monitoring: Azure Service Health alerts, quota headroom monitoring, AIGP API synthetic probe
 
 ### Step 5 — FinOps
 - **5.1** Token & cost monitoring per agent and per email

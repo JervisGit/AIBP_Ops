@@ -631,6 +631,6 @@ A monthly **Azure Logic Apps** workflow generates and deposits the following evi
 
 > **Compliance Note (PDPA)**: The DPIA process must be triggered for any OPA policy change that alters the data processing permissions of agents (e.g., a new tool permission that enables agents to access a new data category). DPIAs are stored in the compliance evidence repository under `/pdpa/dpia/`.
 
-> **Compliance Note (IM8)**: IM8 Clause 5 (System Security Management) requires that all IT systems undergo vulnerability assessment before major deployments. MDC Defender for Containers automated CVE scanning satisfies this requirement for container images. The CI pipeline must be configured to also run `az acr check-health` and review the MDC scan report before promoting from test to pre-prod.
+> **Compliance Note (IM8)**: IM8 Clause 5 (System Security Management) requires that all IT systems undergo vulnerability assessment before major deployments. MDC Defender for Containers automated CVE scanning satisfies this requirement for container images. The CI pipeline must be configured to also run `az acr check-health` and review the MDC scan report before promoting from SIT to ORT.
 
 > **Compliance Note (ISO 27001)**: OPA policy files and their change history (Git blame, pull request reviews) constitute the documentation required for ISO 27001 control A.18.1.1 (Identification of Applicable Legislation and Contractual Requirements) and A.18.2 (Information Security Reviews).
